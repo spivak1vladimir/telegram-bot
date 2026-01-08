@@ -125,3 +125,95 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Статус: {status}\n"
         f"Позиция: {position}"
     )
+
+    await context.bot.send_message(
+        chat_id=ADMIN_CHAT_ID,
+        text=admin_text
+    )
+
+    if is_main:
+        user_text = (
+            "Регистрация подтверждена.\n"
+            "Дистанция: 6 км\n"
+            f"Ваш номер: {position}/{MAX_SLOTS}"
+        )
+    else:
+        user_text = (
+            "Основные места заняты.\n"
+            "Вы добавлены в лист ожидания.\n"
+            f"Позиция в очереди: {position - MAX_SLOTS}"
+        )
+
+    keyboard = [[InlineKeyboardButton("Отменить участие", callback_data="cancel")]]
+    await query.edit_message_text(
+        user_text,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+# ------------------ ОТМЕНА ------------------
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+
+    if user_id in data["6km"]:
+        data["6km"].remove(user_id)
+        save_data()
+        await query.edit_message_text("Регистрация отменена.")
+        return
+
+    await query.edit_message_text("Вы не были зарегистрированы.")
+
+# ------------------ АДМИНКА ------------------
+async def admin_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return
+
+    users = data["6km"]
+
+    if not users:
+        await update.message.reply_text("Список участников пуст.")
+        return
+
+    text = "Участники 6 км:\n\n"
+    for i, user_id in enumerate(users, start=1):
+        text += f"{i}. ID: {user_id}\n"
+
+    await update.message.reply_text(text)
+
+# ------------------ НАПОМИНАНИЕ ------------------
+async def send_warning(context: ContextTypes.DEFAULT_TYPE):
+    users = data["6km"]
+
+    for user_id in users:
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=WARNING_TEXT,
+                connect_timeout=10,
+                read_timeout=10,
+                write_timeout=10
+            )
+        except Exception as e:
+            logger.warning(f"Ошибка отправки пользователю {user_id}: {e}")
+
+# ------------------ ЗАПУСК ------------------
+def main():
+    app = Application.builder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("admin", admin_list))
+    app.add_handler(CallbackQueryHandler(register, pattern="reg_6"))
+    app.add_handler(CallbackQueryHandler(info, pattern="info"))
+    app.add_handler(CallbackQueryHandler(cancel, pattern="cancel"))
+
+    # Напоминание каждый день в 00:30
+    app.job_queue.run_daily(
+        send_warning,
+        time=time(hour=0, minute=30)
+    )
+
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
